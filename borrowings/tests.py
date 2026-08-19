@@ -164,3 +164,135 @@ class BorrowingListDetailTests(APITestCase):
 
         with self.assertRaises(ValidationError):
             borrowing.validate_constraints()
+
+
+class BorrowingCreateTests(APITestCase):
+    def setUp(self):
+        self.email = "borrower@example.com"
+        self.password = "testpassword123"
+
+        self.user = User.objects.create_user(
+            email=self.email,
+            password=self.password,
+            first_name="Test",
+            last_name="User",
+        )
+
+        self.book = Book.objects.create(
+            title="Available Book",
+            author="Test Author",
+            cover=Book.CoverType.HARD,
+            inventory=3,
+            daily_fee="2.50",
+        )
+
+        response = self.client.post(
+            "/api/users/token/",
+            {
+                "email": self.email,
+                "password": self.password,
+            },
+            format="json",
+        )
+
+        self.client.credentials(
+            HTTP_AUTHORIZE=f"Bearer {response.data['access']}"
+        )
+
+    def test_create_borrowing(self):
+        response = self.client.post(
+            "/api/borrowings/",
+            {
+                "expected_return_date": "2026-08-30",
+                "book": self.book.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        borrowing = Borrowing.objects.get()
+
+        self.assertEqual(borrowing.user, self.user)
+        self.assertEqual(borrowing.book, self.book)
+        self.assertEqual(
+            borrowing.expected_return_date.isoformat(),
+            "2026-08-30",
+        )
+
+        self.book.refresh_from_db()
+        self.assertEqual(self.book.inventory, 2)
+
+    def test_cannot_create_borrowing_when_book_is_out_of_stock(self):
+        self.book.inventory = 0
+        self.book.save(update_fields=["inventory"])
+
+        response = self.client.post(
+            "/api/borrowings/",
+            {
+                "expected_return_date": "2026-08-30",
+                "book": self.book.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn("book", response.data)
+
+        self.assertEqual(
+            Borrowing.objects.count(),
+            0,
+        )
+
+    def test_create_borrowing_requires_authentication(self):
+        self.client.credentials()
+
+        response = self.client.post(
+            "/api/borrowings/",
+            {
+                "expected_return_date": "2026-08-30",
+                "book": self.book.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+
+    def test_create_borrowing_with_invalid_book(self):
+        response = self.client.post(
+            "/api/borrowings/",
+            {
+                "expected_return_date": "2026-08-30",
+                "book": 9999,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    def test_create_borrowing_requires_expected_return_date(self):
+        response = self.client.post(
+            "/api/borrowings/",
+            {
+                "book": self.book.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
