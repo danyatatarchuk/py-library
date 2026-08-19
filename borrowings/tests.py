@@ -112,7 +112,9 @@ class BorrowingListDetailTests(APITestCase):
             self.user.id,
         )
 
-    def test_borrowing_detail_for_nonexistent_borrowing_returns_404(self):
+    def test_borrowing_detail_for_nonexistent_borrowing_returns_404(
+        self,
+    ):
         response = self.client.get("/api/borrowings/999/")
 
         self.assertEqual(
@@ -165,6 +167,147 @@ class BorrowingListDetailTests(APITestCase):
         with self.assertRaises(ValidationError):
             borrowing.validate_constraints()
 
+    def test_non_admin_sees_only_own_borrowings(self):
+        other_borrowing = Borrowing.objects.create(
+            expected_return_date=date.today() + timedelta(days=5),
+            book=self.book,
+            user=self.other_user,
+        )
+
+        response = self.client.get("/api/borrowings/")
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(
+            response.data[0]["id"],
+            self.borrowing.id,
+        )
+        self.assertNotEqual(
+            response.data[0]["id"],
+            other_borrowing.id,
+        )
+
+    def test_filter_active_borrowings(self):
+        Borrowing.objects.create(
+            expected_return_date=date.today() + timedelta(days=5),
+            actual_return_date=date.today(),
+            book=self.book,
+            user=self.user,
+        )
+
+        response = self.client.get(
+            "/api/borrowings/?is_active=true"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(len(response.data), 1)
+        self.assertIsNone(
+            response.data[0]["actual_return_date"]
+        )
+
+    def test_filter_inactive_borrowings(self):
+        returned_borrowing = Borrowing.objects.create(
+            expected_return_date=date.today() + timedelta(days=5),
+            actual_return_date=date.today(),
+            book=self.book,
+            user=self.user,
+        )
+
+        response = self.client.get(
+            "/api/borrowings/?is_active=false"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(
+            response.data[0]["id"],
+            returned_borrowing.id,
+        )
+
+    def test_admin_sees_all_borrowings(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+
+        other_borrowing = Borrowing.objects.create(
+            expected_return_date=date.today() + timedelta(days=5),
+            book=self.book,
+            user=self.other_user,
+        )
+
+        response = self.client.get("/api/borrowings/")
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(len(response.data), 2)
+
+        borrowing_ids = {
+            item["id"]
+            for item in response.data
+        }
+
+        self.assertIn(
+            self.borrowing.id,
+            borrowing_ids,
+        )
+        self.assertIn(
+            other_borrowing.id,
+            borrowing_ids,
+        )
+
+    def test_admin_can_filter_by_user_id(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+
+        other_borrowing = Borrowing.objects.create(
+            expected_return_date=date.today() + timedelta(days=5),
+            book=self.book,
+            user=self.other_user,
+        )
+
+        response = self.client.get(
+            f"/api/borrowings/?user_id={self.other_user.id}"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(
+            response.data[0]["id"],
+            other_borrowing.id,
+        )
+
+    def test_non_admin_cannot_use_user_id_to_see_other_borrowings(
+        self,
+    ):
+        Borrowing.objects.create(
+            expected_return_date=date.today() + timedelta(days=5),
+            book=self.book,
+            user=self.other_user,
+        )
+
+        response = self.client.get(
+            f"/api/borrowings/?user_id={self.other_user.id}"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(len(response.data), 0)
+
 
 class BorrowingCreateTests(APITestCase):
     def setUp(self):
@@ -216,17 +359,28 @@ class BorrowingCreateTests(APITestCase):
 
         borrowing = Borrowing.objects.get()
 
-        self.assertEqual(borrowing.user, self.user)
-        self.assertEqual(borrowing.book, self.book)
+        self.assertEqual(
+            borrowing.user,
+            self.user,
+        )
+        self.assertEqual(
+            borrowing.book,
+            self.book,
+        )
         self.assertEqual(
             borrowing.expected_return_date.isoformat(),
             "2026-08-30",
         )
 
         self.book.refresh_from_db()
-        self.assertEqual(self.book.inventory, 2)
+        self.assertEqual(
+            self.book.inventory,
+            2,
+        )
 
-    def test_cannot_create_borrowing_when_book_is_out_of_stock(self):
+    def test_cannot_create_borrowing_when_book_is_out_of_stock(
+        self,
+    ):
         self.book.inventory = 0
         self.book.save(update_fields=["inventory"])
 
@@ -244,7 +398,10 @@ class BorrowingCreateTests(APITestCase):
             status.HTTP_400_BAD_REQUEST,
         )
 
-        self.assertIn("book", response.data)
+        self.assertIn(
+            "book",
+            response.data,
+        )
 
         self.assertEqual(
             Borrowing.objects.count(),
