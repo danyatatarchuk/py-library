@@ -21,5 +21,16 @@ class UserSerializer(serializers.ModelSerializer):
         return User.objects.create_user(**validated_data)
 
 
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+        )
+
+
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
     username_field = "email"

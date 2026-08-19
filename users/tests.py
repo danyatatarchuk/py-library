@@ -1,4 +1,3 @@
-from users.models import User
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -137,6 +136,91 @@ class JWTAuthenticationTests(APITestCase):
             },
             format="json",
         )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+
+
+class UserMeTests(APITestCase):
+    def setUp(self):
+        self.email = "me@example.com"
+        self.password = "testpassword123"
+
+        self.user = User.objects.create_user(
+            email=self.email,
+            password=self.password,
+            first_name="Test",
+            last_name="User",
+        )
+
+        response = self.client.post(
+            "/api/users/token/",
+            {
+                "email": self.email,
+                "password": self.password,
+            },
+            format="json",
+        )
+
+        self.access_token = response.data["access"]
+
+        self.client.credentials(
+            HTTP_AUTHORIZE=f"Bearer {self.access_token}"
+        )
+
+    def test_get_my_profile(self):
+        response = self.client.get("/api/users/me/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], self.user.id)
+        self.assertEqual(response.data["email"], self.email)
+        self.assertEqual(response.data["first_name"], "Test")
+        self.assertEqual(response.data["last_name"], "User")
+
+    def test_update_my_profile_with_patch(self):
+        response = self.client.patch(
+            "/api/users/me/",
+            {
+                "first_name": "Updated",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["first_name"], "Updated")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.first_name, "Updated")
+
+    def test_update_my_profile_with_put(self):
+        response = self.client.put(
+            "/api/users/me/",
+            {
+                "email": "updated@example.com",
+                "first_name": "Updated",
+                "last_name": "User",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data["email"],
+            "updated@example.com",
+        )
+
+        self.user.refresh_from_db()
+        self.assertEqual(
+            self.user.email,
+            "updated@example.com",
+        )
+
+    def test_profile_requires_authentication(self):
+        self.client.credentials()
+
+        response = self.client.get("/api/users/me/")
 
         self.assertEqual(
             response.status_code,
