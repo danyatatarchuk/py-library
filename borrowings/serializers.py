@@ -23,5 +23,5 @@ class BorrowingSerializer(serializers.ModelSerializer):
             "title": obj.book.title,
             "author": obj.book.author,
             "cover": obj.book.cover,
-            "daily_fee": obj.book.daily_fee,
+            "daily_fee": str(obj.book.daily_fee),
         }
