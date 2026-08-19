@@ -2,6 +2,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -15,9 +16,16 @@ User = get_user_model()
 class BorrowingListDetailTests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(
-            email="test@example.com",
-            password="testpassword123",
+            email="user@example.com",
+            password="password123",
             first_name="Test",
+            last_name="User",
+        )
+
+        self.other_user = User.objects.create_user(
+            email="other@example.com",
+            password="password123",
+            first_name="Other",
             last_name="User",
         )
 
@@ -26,7 +34,7 @@ class BorrowingListDetailTests(APITestCase):
             author="Test Author",
             cover=Book.CoverType.HARD,
             inventory=5,
-            daily_fee="2.50",
+            daily_fee=Decimal("2.50"),
         )
 
         self.borrowing = Borrowing.objects.create(
@@ -35,31 +43,40 @@ class BorrowingListDetailTests(APITestCase):
             user=self.user,
         )
 
-        response = self.client.post(
-            "/api/users/token/",
-            {
-                "email": "test@example.com",
-                "password": "testpassword123",
-            },
-            format="json",
-        )
+        self.client.force_authenticate(user=self.user)
 
-        self.access_token = response.data["access"]
-
-        self.client.credentials(
-            HTTP_AUTHORIZE=f"Bearer {self.access_token}"
-        )
-
-    def test_get_borrowings_list(self):
+    def test_borrowing_list_returns_200(self):
         response = self.client.get("/api/borrowings/")
 
         self.assertEqual(
             response.status_code,
             status.HTTP_200_OK,
         )
-        self.assertEqual(len(response.data), 1)
 
-    def test_get_borrowing_detail(self):
+    def test_borrowing_list_contains_borrowing(self):
+        response = self.client.get("/api/borrowings/")
+
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(
+            response.data[0]["id"],
+            self.borrowing.id,
+        )
+
+    def test_borrowing_list_contains_book_info(self):
+        response = self.client.get("/api/borrowings/")
+
+        self.assertEqual(
+            response.data[0]["book"],
+            {
+                "id": self.book.id,
+                "title": self.book.title,
+                "author": self.book.author,
+                "cover": "HARD",
+                "daily_fee": "2.50",
+            },
+        )
+
+    def test_borrowing_detail_returns_200(self):
         response = self.client.get(
             f"/api/borrowings/{self.borrowing.id}/"
         )
@@ -67,24 +84,11 @@ class BorrowingListDetailTests(APITestCase):
         self.assertEqual(
             response.status_code,
             status.HTTP_200_OK,
-        )
-        self.assertEqual(
-            response.data["id"],
-            self.borrowing.id,
-        )
-        self.assertEqual(
-            response.data["user"],
-            self.user.id,
         )
 
     def test_borrowing_detail_contains_book_info(self):
         response = self.client.get(
             f"/api/borrowings/{self.borrowing.id}/"
-        )
-
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_200_OK,
         )
 
         self.assertEqual(
@@ -94,12 +98,30 @@ class BorrowingListDetailTests(APITestCase):
                 "title": self.book.title,
                 "author": self.book.author,
                 "cover": "HARD",
-                "daily_fee": Decimal("2.50"),
+                "daily_fee": "2.50",
             },
         )
 
-    def test_borrowings_list_requires_authentication(self):
-        self.client.credentials()
+    def test_borrowing_detail_contains_user(self):
+        response = self.client.get(
+            f"/api/borrowings/{self.borrowing.id}/"
+        )
+
+        self.assertEqual(
+            response.data["user"],
+            self.user.id,
+        )
+
+    def test_borrowing_detail_for_nonexistent_borrowing_returns_404(self):
+        response = self.client.get("/api/borrowings/999/")
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+    def test_borrowing_list_requires_authentication(self):
+        self.client.force_authenticate(user=None)
 
         response = self.client.get("/api/borrowings/")
 
@@ -109,7 +131,7 @@ class BorrowingListDetailTests(APITestCase):
         )
 
     def test_borrowing_detail_requires_authentication(self):
-        self.client.credentials()
+        self.client.force_authenticate(user=None)
 
         response = self.client.get(
             f"/api/borrowings/{self.borrowing.id}/"
@@ -119,3 +141,26 @@ class BorrowingListDetailTests(APITestCase):
             response.status_code,
             status.HTTP_401_UNAUTHORIZED,
         )
+
+    def test_expected_return_date_cannot_be_before_borrow_date(self):
+        borrowing = Borrowing(
+            borrow_date=date.today(),
+            expected_return_date=date.today() - timedelta(days=1),
+            book=self.book,
+            user=self.user,
+        )
+
+        with self.assertRaises(ValidationError):
+            borrowing.validate_constraints()
+
+    def test_actual_return_date_cannot_be_before_borrow_date(self):
+        borrowing = Borrowing(
+            borrow_date=date.today(),
+            expected_return_date=date.today() + timedelta(days=7),
+            actual_return_date=date.today() - timedelta(days=1),
+            book=self.book,
+            user=self.user,
+        )
+
+        with self.assertRaises(ValidationError):
+            borrowing.validate_constraints()
