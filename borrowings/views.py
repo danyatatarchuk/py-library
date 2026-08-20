@@ -1,12 +1,13 @@
 from django.db import transaction
 from django.utils import timezone
+from rest_framework import status
 from rest_framework.generics import (
     ListCreateAPIView,
     RetrieveAPIView,
 )
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework.views import APIView
 
 from borrowings.models import Borrowing
 from borrowings.serializers import (
@@ -33,6 +34,7 @@ class BorrowingListCreateView(ListCreateAPIView):
             queryset = queryset.filter(user=user)
 
             user_id = self.request.query_params.get("user_id")
+
             if user_id and user_id != str(user.id):
                 return queryset.none()
 
@@ -61,37 +63,55 @@ class BorrowingDetailView(RetrieveAPIView):
     permission_classes = [IsAuthenticated]
 
 
-class BorrowingReturnView(RetrieveAPIView):
-    queryset = Borrowing.objects.select_related("book", "user")
-    serializer_class = BorrowingSerializer
+class BorrowingReturnView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, *args, **kwargs):
-        borrowing = self.get_object()
-
-        if (
-            not request.user.is_staff
-            and borrowing.user_id != request.user.id
-        ):
+    def post(self, request, pk):
+        try:
+            borrowing = Borrowing.objects.select_related(
+                "book",
+                "user",
+            ).get(pk=pk)
+        except Borrowing.DoesNotExist:
             return Response(
-                {"detail": "You can only return your own borrowing."},
+                {"detail": "Borrowing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not request.user.is_staff and borrowing.user != request.user:
+            return Response(
+                {
+                    "detail": (
+                        "You can return only your own borrowing."
+                    )
+                },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
         if borrowing.actual_return_date is not None:
             return Response(
-                {"detail": "This borrowing has already been returned."},
+                {"detail": "This book has already been returned."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         with transaction.atomic():
-            borrowing.actual_return_date = timezone.now().date()
-            borrowing.save(update_fields=["actual_return_date"])
+            borrowing.actual_return_date = timezone.localdate()
+            borrowing.save(
+                update_fields=["actual_return_date"]
+            )
 
             borrowing.book.inventory += 1
-            borrowing.book.save(update_fields=["inventory"])
+            borrowing.book.save(
+                update_fields=["inventory"]
+            )
 
         return Response(
-            BorrowingSerializer(borrowing).data,
+            {
+                "detail": "Book returned successfully.",
+                "actual_return_date": (
+                    borrowing.actual_return_date
+                ),
+                "inventory": borrowing.book.inventory,
+            },
             status=status.HTTP_200_OK,
         )

@@ -453,3 +453,115 @@ class BorrowingCreateTests(APITestCase):
             response.status_code,
             status.HTTP_400_BAD_REQUEST,
         )
+
+
+class BorrowingReturnTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="return@example.com",
+            password="password123",
+        )
+
+        self.other_user = User.objects.create_user(
+            email="other@example.com",
+            password="password123",
+        )
+
+        self.book = Book.objects.create(
+            title="Return Book",
+            author="Test Author",
+            cover=Book.CoverType.HARD,
+            inventory=4,
+            daily_fee=Decimal("2.50"),
+        )
+
+        self.borrowing = Borrowing.objects.create(
+            expected_return_date=date.today() + timedelta(days=7),
+            book=self.book,
+            user=self.user,
+        )
+
+        self.client.force_authenticate(user=self.user)
+
+    def test_user_can_return_own_borrowing(self):
+        response = self.client.post(
+            f"/api/borrowings/{self.borrowing.id}/return/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.borrowing.refresh_from_db()
+        self.book.refresh_from_db()
+
+        self.assertEqual(
+            self.borrowing.actual_return_date,
+            date.today(),
+        )
+        self.assertEqual(
+            self.book.inventory,
+            5,
+        )
+
+    def test_cannot_return_borrowing_twice(self):
+        self.borrowing.actual_return_date = date.today()
+        self.borrowing.save(
+            update_fields=["actual_return_date"]
+        )
+
+        response = self.client.post(
+            f"/api/borrowings/{self.borrowing.id}/return/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    def test_user_cannot_return_other_users_borrowing(self):
+        self.borrowing.user = self.other_user
+        self.borrowing.save(update_fields=["user"])
+
+        response = self.client.post(
+            f"/api/borrowings/{self.borrowing.id}/return/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        self.borrowing.refresh_from_db()
+        self.book.refresh_from_db()
+
+        self.assertIsNone(
+            self.borrowing.actual_return_date
+        )
+        self.assertEqual(
+            self.book.inventory,
+            4,
+        )
+
+    def test_return_nonexistent_borrowing(self):
+        response = self.client.post(
+            "/api/borrowings/9999/return/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+    def test_return_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.post(
+            f"/api/borrowings/{self.borrowing.id}/return/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
