@@ -1,9 +1,8 @@
 venv/
+.git/
 .idea/
 __pycache__/
 *.pyc
-.env
 db.sqlite3
-*.sqlite3
-.coverage
-htmlcov/
+.env
+.pytest_cache/
