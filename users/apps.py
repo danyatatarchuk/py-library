@@ -6,4 +6,4 @@ class UsersConfig(AppConfig):
     name = "users"
 
     def ready(self):
-        import users.schema
+        import users.schema  # noqa: F401

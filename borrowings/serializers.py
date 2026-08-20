@@ -2,7 +2,6 @@ from django.db import transaction
 from rest_framework import serializers
 
 from borrowings.models import Borrowing
-from books.models import Book
 
 
 class BorrowingSerializer(serializers.ModelSerializer):
